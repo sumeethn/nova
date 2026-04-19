@@ -1,0 +1,55 @@
+services:
+  rtvi-vlm:
+    image: ${RTVI_IMAGE:-nvcr.io/nvidia/vss-core/vss-rt-vlm:3.1.0}
+    shm_size: "16gb"
+    runtime: nvidia
+    # host network gives the container direct LAN access so it can reach the
+    # RTSP camera at 192.168.68.64. With this mode, port mapping is automatic
+    # and the service is available at host:8000.
+    network_mode: host
+    volumes:
+      - rtvi-ngc-model-cache:/opt/nvidia/rtvi/.rtvi/ngc_model_cache
+      - rtvi-hf-cache:/tmp/huggingface
+    environment:
+      NGC_API_KEY: "${NGC_API_KEY}"
+      NVIDIA_API_KEY: "${NVIDIA_API_KEY:-${NGC_API_KEY}}"
+      NVIDIA_VISIBLE_DEVICES: "${NVIDIA_VISIBLE_DEVICES:-0}"
+      VLM_MODEL_TO_USE: "${VLM_MODEL_TO_USE:-cosmos-reason2}"
+      MODEL_PATH: "${MODEL_PATH:-ngc:nim/nvidia/cosmos-reason2-8b:1208-fp8-static-kv8}"
+      VLM_BATCH_SIZE: "${VLM_BATCH_SIZE:-32}"
+      VLLM_GPU_MEMORY_UTILIZATION: "${VLLM_GPU_MEMORY_UTILIZATION:-0.85}"
+      VLM_MAX_MODEL_LEN: "${VLM_MAX_MODEL_LEN:-64000}"
+      NUM_VLM_PROCS: "${NUM_VLM_PROCS:-}"
+      VLM_SYSTEM_PROMPT: "${VLM_SYSTEM_PROMPT:-}"
+      VLM_INPUT_WIDTH: "${VLM_INPUT_WIDTH:-}"
+      VLM_INPUT_HEIGHT: "${VLM_INPUT_HEIGHT:-}"
+      VLM_DEFAULT_NUM_FRAMES_PER_SECOND_OR_FIXED_FRAMES_CHUNK: "${VLM_DEFAULT_NUM_FRAMES_PER_SECOND_OR_FIXED_FRAMES_CHUNK:-}"
+      KAFKA_ENABLED: "${KAFKA_ENABLED:-false}"
+      ENABLE_AUDIO: "false"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      RTVI_RTSP_LATENCY: "${RTVI_RTSP_LATENCY:-2000}"
+      RTVI_RTSP_TIMEOUT: "${RTVI_RTSP_TIMEOUT:-2000}"
+      RTVI_RTSP_RECONNECTION_INTERVAL: "${RTVI_RTSP_RECONNECTION_INTERVAL:-5}"
+      RTVI_RTSP_RECONNECTION_WINDOW: "${RTVI_RTSP_RECONNECTION_WINDOW:-60}"
+      RTVI_RTSP_RECONNECTION_MAX_ATTEMPTS: "${RTVI_RTSP_RECONNECTION_MAX_ATTEMPTS:-10}"
+      VLLM_IGNORE_EOS: "false"
+      VLLM_ENABLE_PREFIX_CACHING: "true"
+      VSS_SKIP_INPUT_MEDIA_VERIFICATION: "${VSS_SKIP_INPUT_MEDIA_VERIFICATION:-}"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      stack: 67108864
+    ipc: host
+    stdin_open: true
+    tty: true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 600s
+
+volumes:
+  rtvi-ngc-model-cache:
+  rtvi-hf-cache:
