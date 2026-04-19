@@ -49,19 +49,28 @@ _stream_id: str | None = None
 _base_url: str = DEFAULT_BASE_URL
 
 
+def _deregister_stream() -> None:
+    """Stop caption generation and deregister the stream (idempotent)."""
+    global _stream_id
+    sid = _stream_id
+    if not sid:
+        return
+    print(f"\n[{_now()}] Stopping — cleaning up stream {sid} …")
+    try:
+        requests.delete(f"{_base_url}/generate_captions_alerts/{sid}", timeout=10)
+    except Exception:
+        pass
+    try:
+        requests.delete(f"{_base_url}/streams/delete/{sid}", timeout=10)
+        print(f"[{_now()}] Stream removed.")
+    except Exception:
+        pass
+    _stream_id = None
+
+
 def _cleanup(signum=None, frame=None) -> None:
-    """Stop caption generation and deregister the stream on exit."""
-    if _stream_id:
-        print(f"\n[{_now()}] Stopping — cleaning up stream {_stream_id} …")
-        try:
-            requests.delete(f"{_base_url}/generate_captions_alerts/{_stream_id}", timeout=10)
-        except Exception:
-            pass
-        try:
-            requests.delete(f"{_base_url}/streams/delete/{_stream_id}", timeout=10)
-            print(f"[{_now()}] Stream removed.")
-        except Exception:
-            pass
+    """Signal handler: tear down stream then exit."""
+    _deregister_stream()
     sys.exit(0)
 
 
@@ -85,7 +94,8 @@ def wait_for_ready(base_url: str, timeout: int = 600) -> None:
             if r.status_code == 200:
                 print(f"[{_now()}] Service is ready.")
                 return
-        except requests.exceptions.ConnectionError:
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            # Connection refused, DNS, TLS, etc.; read/connect timeouts (e.g. ReadTimeout)
             pass
         time.sleep(5)
     print(f"[{_now()}] ERROR: Service did not become ready within {timeout}s. Exiting.")
@@ -255,9 +265,10 @@ def main() -> None:
 
     model_id = get_model_id(_base_url)
     stream_id = add_stream(_base_url, args.rtsp, args.rtsp_user, args.rtsp_pass)
-    monitor_stream(_base_url, stream_id, model_id)
-
-    _cleanup()
+    try:
+        monitor_stream(_base_url, stream_id, model_id)
+    finally:
+        _deregister_stream()
 
 
 if __name__ == "__main__":
