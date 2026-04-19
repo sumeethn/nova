@@ -10,6 +10,7 @@ Usage:
 import argparse
 import json
 import os
+import re
 import signal
 import sys
 import time
@@ -30,14 +31,16 @@ DEFAULT_RTSP_PASS = os.getenv("RTSP_PASS", "")
 
 PERSON_PROMPT = """\
 You are a security monitoring system. Analyze the video and determine if any \
-person or people are visible in the scene.
-Respond in this exact format and nothing else:
-Person Detected: Yes/No
-Count: [number of persons visible, 0 if none]
-Reason: [one sentence describing what you see]\
+person or people are visible in the scene and dropping a package, box, or parcel.
+Respond with only a JSON object — no markdown fences, no extra text:
+{"person_dropping_package_detected": true/false, "count": <integer>, "reason": "<one sentence describing what you see>"}\
 """
 
-SYSTEM_PROMPT = "Answer only in the exact structured format requested. Do not add any extra text."
+SYSTEM_PROMPT = (
+    "You are a structured-output assistant. "
+    "Always respond with a single raw JSON object exactly matching the schema requested. "
+    "Do not include markdown, code fences, or any text outside the JSON object."
+)
 
 # Shorter chunk for faster alert latency on a live stream
 CHUNK_DURATION = 30        # seconds per inference window
@@ -149,21 +152,29 @@ def add_stream(base_url: str, rtsp_url: str, username: str = "", password: str =
     return stream_id
 
 
+_FALLBACK: dict = {"person_dropping_package_detected": False, "count": 0, "reason": ""}
+
+
 def _parse_chunk(content: str) -> dict:
-    """Extract structured fields from the VLM response text."""
-    result = {"person_detected": False, "count": 0, "reason": ""}
-    for line in content.splitlines():
-        lower = line.lower()
-        if lower.startswith("person detected:"):
-            result["person_detected"] = "yes" in lower
-        elif lower.startswith("count:"):
-            try:
-                result["count"] = int(line.split(":", 1)[1].strip())
-            except ValueError:
-                pass
-        elif lower.startswith("reason:"):
-            result["reason"] = line.split(":", 1)[1].strip()
-    return result
+    """Parse the VLM JSON response into structured fields.
+
+    Strips optional markdown fences the model may emit before the JSON object,
+    then falls back to safe defaults on any parse or type error.
+    """
+    match = re.search(r"\{.*\}", content, re.DOTALL)
+    if not match:
+        return dict(_FALLBACK)
+    try:
+        data = json.loads(match.group())
+        return {
+            "person_dropping_package_detected": bool(
+                data.get("person_dropping_package_detected", False)
+            ),
+            "count": int(data.get("count", 0)),
+            "reason": str(data.get("reason", "")),
+        }
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return dict(_FALLBACK)
 
 
 def monitor_stream(base_url: str, stream_id: str, model_id: str) -> None:
@@ -209,7 +220,7 @@ def monitor_stream(base_url: str, stream_id: str, model_id: str) -> None:
             t_end = chunk.get("end_time", "?")
             parsed = _parse_chunk(content)
 
-            if parsed["person_detected"]:
+            if parsed["person_dropping_package_detected"]:
                 print(
                     f"\n{'!'*70}\n"
                     f"  ALERT  [{_now()}]\n"
